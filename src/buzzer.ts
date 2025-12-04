@@ -57,10 +57,14 @@ function createBuzzerRoom(data: any, ws: WebSocketWithData) {
 }
 
 function joinBuzzerRoom(data: any, ws: WebSocketWithData) {
-  const room = buzzerRooms.get(data.roomCode);
+  let room = buzzerRooms.get(data.roomCode);
+  
   if (room) {
-    // Vérifier si le joueur est déjà dans la salle
-    if (!room.players.some(p => p.id === data.userId)) {
+    // Check if player already exists (rejoining)
+    const existingPlayer = room.players.find(p => p.id === data.userId);
+    
+    if (!existingPlayer) {
+      // New player joining
       room.players.push({
         id: data.userId,
         username: data.username
@@ -69,17 +73,16 @@ function joinBuzzerRoom(data: any, ws: WebSocketWithData) {
     
     ws.data = { userId: data.userId, username: data.username, roomCode: data.roomCode };
     ws.send(JSON.stringify({ type: "ROOM_JOINED", room: room }));
-
-    broadcastToRoom(data.roomCode, {
-      type: "PLAYER_JOINED",
-      players: room.players
-    });
+    
+    // Only broadcast if it's a new player, not a reconnection
+    if (!existingPlayer) {
+      broadcastToRoom(data.roomCode, {
+        type: "PLAYER_JOINED",
+        players: room.players
+      });
+    }
   } else {
     createBuzzerRoom(data, ws);
-    // ws.send(JSON.stringify({ 
-    //   type: "ERROR", 
-    //   message: "Salle introuvable" 
-    // }));
   }
 }
 
@@ -208,20 +211,44 @@ router.get("/BuzzerRoom", (ctx : any) => {
       if (ws.data?.roomCode) {
         const room = buzzerRooms.get(ws.data.roomCode);
         if (room) {
-          room.players = room.players.filter((p) => p.id !== ws.data?.userId);
+          const wasHost = room.host === ws.data.userId;
           
-          if (room.players.length === 0) {
-            buzzerRooms.delete(ws.data.roomCode);
+          if (wasHost) {
+            // Wait 10 seconds for host to reconnect
+            setTimeout(() => {
+              const currentRoom = buzzerRooms.get(ws.data!.roomCode!);
+              if (currentRoom && currentRoom.host === ws.data!.userId) {
+                // Host didn't reconnect, transfer role to another player
+                const otherPlayers = currentRoom.players.filter(p => p.id !== ws.data!.userId);
+                
+                if (otherPlayers.length > 0) {
+                  currentRoom.host = otherPlayers[0].id;
+                  currentRoom.players = otherPlayers;
+                  
+                  broadcastToRoom(ws.data!.roomCode!, {
+                    type: "PLAYER_LEFT",
+                    players: otherPlayers,
+                    newHost: currentRoom.host
+                  });
+                } else {
+                  // No other players, delete room
+                  buzzerRooms.delete(ws.data!.roomCode!);
+                }
+              }
+            }, 10000);
           } else {
-            if (room.host === ws.data.userId) {
-              room.host = room.players[0].id;
-            }
+            // Regular player left, remove immediately
+            room.players = room.players.filter(p => p.id !== ws.data.userId);
             
             broadcastToRoom(ws.data.roomCode, {
               type: "PLAYER_LEFT",
               players: room.players,
               newHost: room.host
             });
+            
+            if (room.players.length === 0) {
+              buzzerRooms.delete(ws.data.roomCode);
+            }
           }
         }
       }
