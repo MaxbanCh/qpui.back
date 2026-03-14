@@ -4,4 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+actix-cors = "0.7.1"
 actix-web = "4"
+actix-ws = "0.4.0"
+futures-util = "0.3.32"
+tokio = { version = "1.50.0", features = ["full"] }
